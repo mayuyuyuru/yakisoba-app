@@ -1,1 +1,248 @@
 # yakisoba-app
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>屋台注文アプリ</title>
+<style>
+body{ font-family:-apple-system; margin:0; background:#f2f2f7; }
+.tabs{ display:flex; background:#fff; border-bottom:1px solid #ddd; }
+.tab{ flex:1; padding:15px; text-align:center; font-weight:bold; cursor:pointer; }
+.tab.active{ color:#007aff; border-bottom:3px solid #007aff; }
+.screen{ display:none; padding:15px; }
+.screen.active{ display:block; }
+.counter{ display:flex; justify-content:space-between; align-items:center; margin:15px 0; background:#fff; padding:10px; border-radius:12px; }
+.counter button{ font-size:26px; width:44px;height:44px; border:none; border-radius:10px; background:#007aff; color:#fff; }
+.send-btn{ width:100%; padding:18px; font-size:20px; background:#34c759; color:white; border:none; border-radius:14px; margin-top:10px; }
+.card{ background:white; padding:15px; border-radius:14px; margin-bottom:10px; font-size:18px; position:relative; transition:.2s; touch-action:pan-y; }
+.card.complete{ opacity:.5; }
+.card::before{ content:"削除"; position:absolute; left:15px; top:50%; transform:translateY(-50%); color:white; font-weight:bold; display:none; }
+.card.swiping{ background:#ff3b30; color:white; }
+.card.swiping::before{ display:block; }
+.complete-btn{ width:100%; padding:14px; font-size:20px; background:#007aff; color:white; border:none; border-radius:12px; margin-top:10px; }
+.sales{ background:white; padding:15px; border-radius:12px; margin-bottom:10px; font-size:18px; }
+</style>
+</head>
+<body>
+
+<div class="tabs">
+ <div class="tab active" onclick="showTab(0)">会計</div>
+ <div class="tab" onclick="showTab(1)">提供</div>
+ <div class="tab" onclick="showTab(2)">売上</div>
+</div>
+
+<!-- 会計 -->
+<div class="screen active">
+<div class="counter">
+ 焼きそば
+ <div>
+  <button onclick="change('yakisoba',-1)">−</button>
+  <span id="yakisoba">0</span>
+  <button onclick="change('yakisoba',1)">＋</button>
+ </div>
+</div>
+
+<div class="counter">
+ 玉せん
+ <div>
+  <button onclick="change('tamasen',-1)">−</button>
+  <span id="tamasen">0</span>
+  <button onclick="change('tamasen',1)">＋</button>
+ </div>
+</div>
+
+<h2>合計 ¥<span id="total">0</span></h2>
+
+<button class="send-btn" onclick="sendOrder()">注文送信</button>
+
+<p>次の注文番号：<b id="nextOrderNo">1</b></p>
+<p>現在の提供番号：<b id="currentServe">1</b></p>
+<p>未完了の提供数：<b id="waitingCount">0</b></p>
+</div>
+
+<!-- 提供 -->
+<div class="screen">
+<label>
+<input type="checkbox" id="filterToggle" onchange="renderOrders()"> 未完了のみ
+</label>
+<div id="orders"></div>
+</div>
+
+<!-- 売上 -->
+<div class="screen">
+<div class="sales">焼きそば：<span id="yakisobaCount">0</span>個 / ¥<span id="yakisobaSales">0</span></div>
+<div class="sales">玉せん：<span id="tamasenCount">0</span>個 / ¥<span id="tamasenSales">0</span></div>
+<div class="sales"><b>総売上 ¥<span id="totalSales">0</span></b></div>
+<button class="send-btn" style="background:#ff3b30; margin-top:15px;" onclick="deleteAllData()">データを全部削除</button>
+</div>
+
+<script type="module">
+// Firebase 初期化
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+
+const firebaseConfig = {
+ apiKey:"AIzaSyDIpNYvAP41CKfI4Kim-LkBvFKGBGd-2UA",
+ authDomain:"yakisoba-43114.firebaseapp.com",
+ projectId:"yakisoba-43114",
+ storageBucket:"yakisoba-43114.firebasestorage.app",
+ messagingSenderId:"763690330468",
+ appId:"1:763690330468:web:03ad74997af0795f547271"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const ordersCol = collection(db,"orders");
+
+// 会計状態
+let yakisoba=0,tamasen=0;
+let serveNo=1;
+let orderNo=1;
+
+// 合計管理
+let yakQtyTotal=0, tamaQtyTotal=0;
+let yakSalesTotal=0, tamaSalesTotal=0;
+
+// --- タブ ---
+function showTab(n){
+ document.querySelectorAll(".tab").forEach((t,i)=>t.classList.toggle("active",i===n));
+ document.querySelectorAll(".screen").forEach((s,i)=>s.classList.toggle("active",i===n));
+}
+
+// 会計操作
+function change(item,val){
+ if(item==="yakisoba"){ yakisoba=Math.max(0,yakisoba+val); }
+ else{ tamasen=Math.max(0,tamasen+val); }
+ document.getElementById(item).innerText=item==="yakisoba"?yakisoba:tamasen;
+ updateTotal();
+}
+function updateTotal(){
+ document.getElementById("total").innerText = yakisoba*400 + tamasen*200;
+}
+function updateNextNumber(){
+ const next = orderNo>200 ? (orderNo-200)+"+" : orderNo;
+ document.getElementById("nextOrderNo").innerText = next;
+}
+
+// 注文送信
+async function sendOrder(){
+ if(!yakisoba && !tamasen) return;
+ const displayNum = orderNo>200 ? (orderNo-200)+"+" : orderNo;
+
+ await addDoc(ordersCol,{
+   yakisoba, tamasen,
+   number: displayNum,
+   completed:false,
+   timestamp: Date.now()
+ });
+
+ yakisoba=0; tamasen=0;
+ document.getElementById("yakisoba").innerText=0;
+ document.getElementById("tamasen").innerText=0;
+ updateTotal();
+
+ orderNo++;
+ if(orderNo>400) orderNo=1;
+ updateNextNumber();
+}
+
+// --- リアルタイム取得 ---
+onSnapshot(ordersCol,snap=>{
+ const allOrders=[];
+ snap.forEach(d=>allOrders.push({id:d.id,...d.data()}));
+ renderOrders(allOrders);
+ updateWaiting(allOrders);
+ updateSales(allOrders);
+
+ if(allOrders.length>0){
+   const last = allOrders.reduce((a,b)=>a.timestamp>b.timestamp?a:b);
+   orderNo = parseInt(last.number.replace('+',''))+1;
+   updateNextNumber();
+ }
+});
+
+// --- 提供画面レンダリング ---
+function renderOrders(orders){
+ const wrap = document.getElementById("orders");
+ wrap.innerHTML="";
+ const filter = document.getElementById("filterToggle").checked;
+
+ orders.forEach((o,i)=>{
+   if(filter && o.completed) return;
+   const card = document.createElement("div");
+   card.className="card"+(o.completed?" complete":"");
+   card.innerHTML = `
+     <b>No.${o.number}</b><br>
+     ${o.yakisoba?`焼きそば ×${o.yakisoba}<br>`:""}
+     ${o.tamasen?`玉せん ×${o.tamasen}`:""}
+     ${!o.completed?`<button class="complete-btn" onclick="completeOrder('${o.id}')">完了</button>`:""}
+   `;
+   addSwipeDelete(card,o);
+   wrap.appendChild(card);
+ });
+}
+
+// 完了
+async function completeOrder(id){
+ await updateDoc(doc(db,"orders",id),{completed:true});
+ serveNo++;
+ document.getElementById("currentServe").innerText = serveNo;
+}
+
+// 未完了数
+function updateWaiting(orders){
+ const waiting = orders.filter(o=>!o.completed).length;
+ document.getElementById("waitingCount").innerText = waiting;
+}
+
+// 売上集計
+function updateSales(orders){
+ let yakTotal=0,tamaTotal=0;
+ orders.forEach(o=>{ if(!o.deleted){ yakTotal+=o.yakisoba; tamaTotal+=o.tamasen; } });
+ document.getElementById("yakisobaCount").innerText = yakTotal;
+ document.getElementById("tamasenCount").innerText = tamaTotal;
+ document.getElementById("yakisobaSales").innerText = yakTotal*400;
+ document.getElementById("tamasenSales").innerText = tamaTotal*200;
+ document.getElementById("totalSales").innerText = yakTotal*400 + tamaTotal*200;
+}
+
+// --- スワイプ削除 ---
+function addSwipeDelete(card,order){
+ let startX=0;
+ card.addEventListener("touchstart",e=>{startX=e.touches[0].clientX;});
+ card.addEventListener("touchmove",e=>{
+   let diff=e.touches[0].clientX-startX;
+   if(diff<-30){ card.style.transform=`translateX(${diff}px)`; card.classList.add("swiping"); }
+ });
+ card.addEventListener("touchend",async e=>{
+   let diff=e.changedTouches[0].clientX-startX;
+   if(diff<-80){
+     if(confirm("本当に削除していい？")){
+       await deleteDoc(doc(db,"orders",order.id));
+     } else {
+       card.style.transform="translateX(0)";
+       card.classList.remove("swiping");
+     }
+   } else {
+     card.style.transform="translateX(0)";
+     card.classList.remove("swiping");
+   }
+ });
+}
+
+// --- 完全削除ボタン ---
+async function deleteAllData(){
+ if(!confirm("本当にすべての注文データを削除していいですか？")) return;
+ const snap = await getDocs(ordersCol);
+ snap.forEach(async d=> await deleteDoc(doc(db,"orders",d.id)));
+ yakisoba=0; tamasen=0; serveNo=1;
+ document.getElementById("yakisoba").innerText=0;
+ document.getElementById("tamasen").innerText=0;
+ document.getElementById("currentServe").innerText=serveNo;
+ updateTotal();
+}
+</script>
+</body>
+</html>
