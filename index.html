@@ -1,5 +1,3 @@
-# yakisoba-app
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -235,14 +233,4 @@ function addSwipeDelete(card,order){
 // --- 完全削除ボタン ---
 async function deleteAllData(){
  if(!confirm("本当にすべての注文データを削除していいですか？")) return;
- const snap = await getDocs(ordersCol);
- snap.forEach(async d=> await deleteDoc(doc(db,"orders",d.id)));
- yakisoba=0; tamasen=0; serveNo=1;
- document.getElementById("yakisoba").innerText=0;
- document.getElementById("tamasen").innerText=0;
- document.getElementById("currentServe").innerText=serveNo;
- updateTotal();
-}
-</script>
-</body>
-</html>
+ const snap = await 
